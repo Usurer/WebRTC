@@ -1,4 +1,4 @@
-var socket = new WebSocket('ws://127.0.0.1:1337/');
+var socket = new WebSocket('ws://192.168.1.3:1337/'); //var socket = new WebSocket('ws://localhost:1337/');
 var signalingChannel = new SignalingChannel();
 var servers = {iceServers:[{url:"stun:stun.l.google.com:19302"}]};
 var pc;
@@ -17,6 +17,9 @@ var masterCandidate;
 var masterRemoteCandidate;
 var slaveCandidate;
 var slaveRemoteCandidate;
+
+//test shit
+var masterReady = false;
 
 socket.addEventListener("message", onMessage, false);
 
@@ -40,7 +43,7 @@ function startMaster(){
     isMaster = true;
     pc = new webkitRTCPeerConnection(servers,{ optional:[ { RtpDataChannels: true } ]});             
     
-    createChannelMaster();
+    createChannelMaster();       
     pc.onicecandidate = masterGotCandidate;
 
     //WARN!!!
@@ -52,10 +55,26 @@ function startMaster(){
     //
     //About exceptions/errors/etc 
     //It looks like onIceCandidate shouldn't run before the descriptions would be set.
-    //Try to do something about it, dude.
-    pc.createOffer(masterGotDescription);     
+    //Try to do something about it, dude.    
+    
+    //pc.createOffer(masterGotDescription);  
+
+    // This is workaround   
+    DoOffer();
+    masterReady = true;
 };
 
+function DoOffer() {
+    if (masterReady) {
+        console.log('Master is ready!!!');
+        pc.createOffer(masterGotDescription);
+        setupChat();
+    }
+    else {
+        console.log('Master is not ready!!!');
+        setTimeout(DoOffer, 1000);
+    };
+}
 
 function startSlave() {
     console.log('Staring slave!');
@@ -111,7 +130,7 @@ function slaveAnswers(desc) {
     console.info(desc);  
     pc.setLocalDescription(desc);    
     console.log('Sending desc to Master: ');
-    signalingChannel.send(JSON.stringify({ "sdp": pc.localDescription }));
+    signalingChannel.send(JSON.stringify({ "sdp": pc.localDescription }));    
 };
 
 function masterGotAnswer(desc) {
@@ -120,7 +139,7 @@ function masterGotAnswer(desc) {
     masterRemoteDescription = desc;    
     var masterRTCDescription = new RTCSessionDescription(masterRemoteDescription.sdp);   
     pc.setRemoteDescription(masterRTCDescription);
-    console.log('Master remote desc was set!')    
+    console.log('Master remote desc was set!');     
 };
 
 function masterGotCandidate(evt) {
@@ -131,7 +150,7 @@ function masterGotCandidate(evt) {
         //Master candidate should be sent to Slave
         signalingChannel.send(JSON.stringify(evt));
         //pc.addIceCandidate(evt.candidate);
-    };
+    };    
 };
 
 function slaveGotCandidate(evt) {
@@ -141,6 +160,7 @@ function slaveGotCandidate(evt) {
         slaveCandidate = evt.candidate;        
         signalingChannel.send(JSON.stringify(evt.candidate));        
     };
+    setupChat();
 };
 
 function slaveReceivedCandidate(evt) {
@@ -184,28 +204,6 @@ function onMessage(evt) {
         }        
     };
 
-    /*if (message.sdp){
-        console.log("Description received:");
-        console.info(message.sdp);
-        receivedSdp = message.sdp;
-        pc.setRemoteDescription(new RTCSessionDescription(receivedSdp), function () {            
-            console.log("Description type is:");
-            console.info(pc.remoteDescription.type);
-            if (pc.remoteDescription.type == "offer")
-                console.log("Creating answer:");
-                pc.createAnswer(localDescCreated, logError);
-        }, logError);}
-    else {
-        console.log("Not description? A candidate then?");
-        console.info(message.candidate);
-        receivedCandidate = message.candidate;
-        try {
-            pc.addIceCandidate(new RTCIceCandidate(message.candidate));
-        }
-        catch (e) {
-            console.info(e);
-        }
-    }*/
 };
 
 function setupChat() {
@@ -229,3 +227,51 @@ function logError(error) {
     console.info(error);
     console.log(error.name + ": " + error.message);
 };
+
+function setupSlaveMirror() {
+    // Slave gets an info about Master's events
+    if (isMaster) return;
+    channel.onmessage = function (evt) {
+        // showChatMessage(evt.data);
+        console.log(evt.data);
+        var packet = JSON.parse(evt.data);
+        document.getElementById('myDiv').style.top = packet.y + 'px';
+        document.getElementById('myDiv').style.left = packet.x + 'px';
+        channel.send('Slave mirrrors: ' + evt.data);
+    };   
+};
+
+function setupMasterSender() {
+    // Master sends ifo about events to Slave
+    if (!isMaster) return;
+    document.onclick = function(e) {
+        console.log('Clicked');
+        window.eventCoords = {x: e.clientX, y: e.clientY};
+        var packet = JSON.stringify({x: e.clientX, y: e.clientY, performance: performance.now() });
+        channel.send(packet);
+    };
+};
+
+function setupMasterMirror() {
+    // Master gets an info about Slave's events (now it's just a copy of Master's data)
+    if (!isMaster) return;
+    channel.onmessage = function (evt) {
+        // showChatMessage(evt.data);
+        console.log(evt.data + ' - ' + performance.now());
+        document.getElementById('myDiv').style.top = window.eventCoords.y + 'px';
+        document.getElementById('myDiv').style.left = window.eventCoords.x + 'px';
+    };   
+};
+
+function setupMirroring() {
+    if (typeof channel !== 'undefined' && channel.readyState == 'open') {
+        setupSlaveMirror();
+        setupMasterSender();
+        setupMasterMirror();
+    }
+    else {
+        setTimeout(setupMirroring, 1000);
+    }
+};
+
+setupMirroring();
